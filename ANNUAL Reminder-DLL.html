@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <title>年费监控系统</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: auto;
+            padding: 20px;
+        }
+        .login-form {
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .case-item {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .urgent {
+            background-color: #fff8e1;
+        }
+        .expired {
+            background-color: #ffebee;
+        }
+        .paid {
+            background-color: #e8f5e9;
+        }
+        button {
+            margin: 5px;
+            cursor: pointer;
+            padding: 5px 10px;
+        }
+        .hidden {
+            display: none;
+        }
+        .controls {
+            margin-top: 20px;
+        }
+        .reminder-active {
+            background-color: #e3f2fd;
+        }
+        details {
+            margin: 5px 0;
+        }
+        .due-date {
+            font-weight: bold;
+            font-size: 16px;
+            color: red;
+        }
+        .abandoned {
+            background-color: #e0e0e0;
+        }
+        input, select {
+            padding: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="login-form" id="loginForm">
+            <h2>用户登录</h2>
+            <div class="form-group">
+                <label for="username">用户名：</label>
+                <input type="text" id="username" aria-label="用户名" placeholder="用户名" required>
+            </div>
+            <div class="form-group">
+                <label for="password">密码：</label>
+                <input type="password" id="password" aria-label="密码" placeholder="密码" required>
+            </div>
+            <button onclick="login()">登录</button>
+        </div>
+
+        <div class="main-content hidden" id="mainContent">
+            <h2>年费监控系统</h2>
+            
+            <h3>添加年费记录</h3>
+            <form id="feeForm">
+                <div class="form-group">
+                    <label for="caseNo">案号：</label>
+                    <input type="text" id="caseNo" aria-label="案号" placeholder="案号" required>
+                </div>
+                <div class="form-group">
+                    <label for="yearSelect">选择年份：</label>
+                    <select id="yearSelect" aria-label="选择年份" required>
+                        <option value="">-- 请选择年份 --</option>
+                        <script>
+                            for (let i = 1; i <= 10; i++) {
+                                document.write(`<option value="${i}年">${i}年</option>`);
+                            }
+                        </script>
+                        <option value="3.5-7.5年">3.5-7.5年</option>
+                        <option value="7.5-11.5年">7.5-11.5年</option>
+                        <option value="11.5年起">11.5年起</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="dueDate">绝限期：</label>
+                    <input type="date" id="dueDate" aria-label="绝限期" required>
+                </div>
+                <button type="submit">添加记录</button>
+            </form>
+
+            <h3>年费记录列表</h3>
+            <div id="feeList"></div>
+
+            <h3>已缴纳的记录</h3>
+            <div id="paidList"></div>
+
+            <h3>已放弃的记录</h3>
+            <div id="abandonedList"></div>
+
+            <div class="controls">
+                <button onclick="exportToExcel()">导出Excel</button>
+                <button onclick="logout()">退出登录</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <script>
+        let fees = [];
+        let paidFees = [];
+        let abandoned = [];
+        let currentUser = null;
+
+        function login() {
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+
+            if (username === 'ANNUAL' && password === 'PCT805') {
+                currentUser = username;
+                document.getElementById('loginForm').classList.add('hidden');
+                document.getElementById('mainContent').classList.remove('hidden');
+                loadFees();
+            } else {
+                alert('用户名或密码错误');
+            }
+        }
+
+        function logout() {
+            currentUser = null;
+            document.getElementById('mainContent').classList.add('hidden');
+            document.getElementById('loginForm').classList.remove('hidden');
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+        }
+
+        function loadFees() {
+            const savedFees = localStorage.getItem('fees');
+            const savedPaidFees = localStorage.getItem('paidFees');
+            const savedAbandoned = localStorage.getItem('abandoned');
+            
+            if (savedFees) fees = JSON.parse(savedFees);
+            if (savedPaidFees) paidFees = JSON.parse(savedPaidFees);
+            if (savedAbandoned) abandoned = JSON.parse(savedAbandoned);
+
+            const feeContainer = document.getElementById('feeList');
+            const paidContainer = document.getElementById('paidList');
+            const abandonedContainer = document.getElementById('abandonedList');
+            
+            [feeContainer, paidContainer, abandonedContainer].forEach(el => el.innerHTML = '');
+            
+            const now = new Date();
+            fees.sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate));
+            
+            fees.forEach(fee => {
+                const dueDate = new Date(fee.dueDate);
+                fee.status = fee.status || 'pending';
+
+                const daysLeft = Math.ceil((dueDate - now) / (1000 * 3600 * 24));
+                
+                const feeDiv = document.createElement('div');
+                feeDiv.className = 'case-item';
+                
+                if (fee.status === 'completed') {
+                    feeDiv.style.opacity = '0.6';
+                } else if (dueDate < now) {
+                    feeDiv.classList.add('expired');
+                } else if (daysLeft <= 30) {
+                    feeDiv.classList.add('urgent');
+                }
+                
+                feeDiv.innerHTML = `
+                    <div>案号: ${fee.caseNo}</div>
+                    <div class="due-date">绝限期: ${fee.dueDate}</div>
+                    <div>
+                        <button onclick="payFee('${fee.caseNo}')">已缴纳</button>
+                        <button onclick="payAndSetDueDate('${fee.caseNo}')">已缴纳并设置日期</button>
+                        <button onclick="abandonFee('${fee.caseNo}')">放弃</button>
+                        <button onclick="delayFee('${fee.caseNo}')">延期</button>
+                    </div>
+                `;
+                feeContainer.appendChild(feeDiv);
+            });
+
+            paidFees.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'case-item paid';
+                div.innerHTML = `
+                    <div>案号: ${item.caseNo}</div>
+                    <div class="due-date">绝限期: ${item.dueDate}</div>
+                    <div>状态: 已缴纳</div>
+                    <button onclick="resumeMonitoring('${item.caseNo}')">继续监控</button>
+                `;
+                paidContainer.appendChild(div);
+            });
+
+            abandoned.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'case-item abandoned';
+                div.innerHTML = `
+                    <details>
+                        <summary>案号: ${item.caseNo} - 绝限期: ${item.dueDate} - 状态: 已放弃</summary>
+                        <button onclick="resumeMonitoring('${item.caseNo}')">继续监控</button>
+                    </details>
+                `;
+                abandonedContainer.appendChild(div);
+            });
+        }
+
+        function addFee(event) {
+            event.preventDefault();
+            const caseNo = document.getElementById('caseNo').value;
+            const year = document.getElementById('yearSelect').value;
+            const dueDate = document.getElementById('dueDate').value;
+            
+            const fee = {
+                caseNo,
+                year,
+                dueDate,
+                status: 'pending'
+            };
+
+            const existingIndex = fees.findIndex(f => f.caseNo === caseNo);
+            if (existingIndex !== -1) {
+                fees[existingIndex] = fee;
+            } else {
+                fees.push(fee);
+            }
+
+            localStorage.setItem('fees', JSON.stringify(fees));
+            
+            loadFees();
+            document.getElementById('feeForm').reset();
+        }
+
+        function payFee(caseNo) {
+            const index = fees.findIndex(f => f.caseNo === caseNo);
+            if (index !== -1) {
+                const fee = fees[index];
+                paidFees.push(fee);
+                fees.splice(index, 1);
+                
+                localStorage.setItem('fees', JSON.stringify(fees));
+                localStorage.setItem('paidFees', JSON.stringify(paidFees));
+                loadFees();
+            }
+        }
+
+        function payAndSetDueDate(caseNo) {
+            const index = fees.findIndex(f => f.caseNo === caseNo);
+            if (index !== -1) {
+                const fee = fees[index];
+                
+                // 创建一个输入框，让用户输入下一次缴费日期
+                const newDateInput = document.createElement('input');
+                newDateInput.type = 'date';
+                newDateInput.className = 'date-input';
+                
+                const confirmationDiv = document.createElement('div');
+                confirmationDiv.innerHTML = `
+                    <div>请输入下一次缴费日期:</div>
+                    ${newDateInput.outerHTML}
+                    <button onclick="confirmNewDate('${caseNo}', this)">确认</button>
+                `;
+                
+                document.getElementById('feeList').prepend(confirmationDiv);
+            }
+        }
+
+        function confirmNewDate(caseNo, button) {
+            const input = button.previousElementSibling;
+            const newDueDate = input.value;
+            
+            if (!newDueDate) {
+                alert('请选择有效的日期');
+                return;
+            }
+            
+            const index = fees.findIndex(f => f.caseNo === caseNo);
+            if (index !== -1) {
+                fees[index].dueDate = newDueDate;
+                
+                localStorage.setItem('fees', JSON.stringify(fees));
+                loadFees();
+                
+                button.parentElement.remove();
+            }
+        }
+
+        function abandonFee(caseNo) {
+            const index = fees.findIndex(f => f.caseNo === caseNo);
+            if (index !== -1) {
+                const fee = fees[index];
+                abandoned.push(fee);
+                fees.splice(index, 1);
+                
+                localStorage.setItem('fees', JSON.stringify(fees));
+                localStorage.setItem('abandoned', JSON.stringify(abandoned));
+                loadFees();
+            }
+        }
+
+        function resumeMonitoring(caseNo) {
+            let found = false;
+            const abandonedIndex = abandoned.findIndex(f => f.caseNo === caseNo);
+            if (abandonedIndex !== -1) {
+                const item = abandoned[abandonedIndex];
+                fees.push(item);
+                abandoned.splice(abandonedIndex, 1);
+                found = true;
+            }
+            
+            if (!found) {
+                const paidIndex = paidFees.findIndex(f => f.caseNo === caseNo);
+                if (paidIndex !== -1) {
+                    const item = paidFees[paidIndex];
+                    fees.push(item);
+                    paidFees.splice(paidIndex, 1);
+                }
+            }
+            
+            localStorage.setItem('fees', JSON.stringify(fees));
+            localStorage.setItem('abandoned', JSON.stringify(abandoned));
+            localStorage.setItem('paidFees', JSON.stringify(paidFees));
+            loadFees();
+        }
+
+        function delayFee(caseNo) {
+            const index = fees.findIndex(f => f.caseNo === caseNo);
+            if (index !== -1) {
+                const fee = fees[index];
+                const newDate = new Date(fee.dueDate);
+                newDate.setDate(newDate.getDate() + 30);
+                
+                fee.dueDate = newDate.toISOString().split('T')[0];
+                
+                localStorage.setItem('fees', JSON.stringify(fees));
+                loadFees();
+            }
+        }
+
+        function exportToExcel() {
+            const excelData = fees.map(fee => ({
+                '案号': fee.caseNo,
+                '年份': fee.year,
+                '绝限期': fee.dueDate,
+                '状态': '待处理'
+            }));
+            
+            const paidData = paidFees.map(item => ({
+                '案号': item.caseNo,
+                '年份': item.year,
+                '绝限期': item.dueDate,
+                '状态': '已缴纳'
+            }));
+            
+            const abandonedData = abandoned.map(item => ({
+                '案号': item.caseNo,
+                '年份': item.year,
+                '绝限期': item.dueDate,
+                '状态': '已放弃'
+            }));
+            
+            const combinedData = [...excelData, ...paidData, ...abandonedData];
+            
+            const ws = XLSX.utils.json_to_sheet(combinedData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "年费记录");
+            
+            const now = new Date();
+            const filename = `年费记录_${now.toISOString().split('T')[0]}.xlsx`;
+            XLSX.writeFile(wb, filename);
+        }
+
+        document.getElementById('feeForm').addEventListener('submit', addFee);
+    </script>
+</body>
+</html>
